@@ -12,7 +12,7 @@
 
 ```bash
 git clone https://github.com/alsoleg89/agentmemo.git
-cd Agentmemo
+cd agentmemo
 
 # Install in editable mode with all dev and optional deps
 pip install -e ".[dev,openai]"
