@@ -30,9 +30,6 @@ jobs:
       - name: Install build tools
         run: pip install hatch
 
-      - name: Set version
-        run: hatch version ${{ inputs.version || github.ref_name }}
-
       - name: Build package
         run: hatch build
 
