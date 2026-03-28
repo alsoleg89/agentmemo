@@ -1,4 +1,2 @@
-raise ImportError(
-    "You installed 'agentmem' — did you mean 'agentmemo'?\n"
-    "    pip install agentmemo"
-)
+from agentmemo import *  # noqa: F401, F403
+from agentmemo import __version__
