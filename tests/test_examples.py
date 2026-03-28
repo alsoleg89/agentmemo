@@ -1,4 +1,5 @@
 """Tests for README examples — run without LLM API keys."""
+
 import pathlib
 
 import pytest
