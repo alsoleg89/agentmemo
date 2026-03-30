@@ -1,16 +1,20 @@
 """Hybrid retriever: TF-IDF (zero deps) + optional embeddings.
 
 The default retriever uses a pure-Python TF-IDF implementation with
-no external dependencies. Results are boosted by retention_score and
+no external dependencies. Results are boosted by retention_score² and
 importance to favor fresh, important facts.
+
+Tokenization is delegated to :func:`ai_knot.languages.tokenize` — the same
+function used by the extractor's deduplication logic.  This guarantees
+that morphological normalization is consistent across the entire pipeline.
 """
 
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
 
+from ai_knot.languages import DEFAULT_LANGUAGES, LanguageDef, tokenize as _lang_tokenize
 from ai_knot.types import Fact
 
 # Weight multipliers for the hybrid score.
@@ -19,22 +23,32 @@ _RETENTION_WEIGHT: float = 0.2
 _IMPORTANCE_WEIGHT: float = 0.2
 
 
-def _tokenize(text: str) -> list[str]:
-    """Split text into lowercase alphanumeric tokens with basic normalization.
+def _tokenize(text: str, langs: tuple[LanguageDef, ...] = DEFAULT_LANGUAGES) -> list[str]:
+    """Thin wrapper around :func:`~ai_knot.languages.tokenize`.
 
-    Splits camelCase ("FastAPI" → ["fast", "api"]) and strips trailing "s"
-    from tokens longer than 3 characters for basic plural handling.
+    Exists so that tests and internal callers can import ``_tokenize`` from
+    this module without coupling to the languages package path.
     """
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    tokens = re.findall(r"[a-zA-Z0-9\u0400-\u04FF]+", text.lower())
-    return [t[:-1] if t.endswith("s") and len(t) > 3 else t for t in tokens]
+    return _lang_tokenize(text, langs)
 
 
 class TFIDFRetriever:
     """Zero-dependency TF-IDF search over a list of Facts.
 
-    Scoring: hybrid_score = w1*tfidf + w2*retention + w3*importance
+    Scoring: hybrid_score = w1*tfidf + w2*retention² + w3*importance
+
+    The quadratic retention term amplifies differences in the 0.0–0.9 range,
+    making recently-reinforced facts rank noticeably higher than stale ones.
+
+    Args:
+        languages: Language definitions used by the tokeniser.  Defaults to
+            :data:`~ai_knot.languages.DEFAULT_LANGUAGES` (all 15 built-ins).
+            Pass the result of :func:`~ai_knot.languages.get_languages` to
+            restrict or extend the set, or an empty tuple to disable stemming.
     """
+
+    def __init__(self, languages: tuple[LanguageDef, ...] = DEFAULT_LANGUAGES) -> None:
+        self._langs = languages
 
     def search(self, query: str, facts: list[Fact], *, top_k: int = 5) -> list[tuple[Fact, float]]:
         """Find the most relevant facts for a query.
@@ -46,19 +60,19 @@ class TFIDFRetriever:
 
         Returns:
             List of (Fact, score) pairs sorted by relevance (most relevant first).
-            Scores are hybrid values combining TF-IDF, retention, and importance.
+            Scores are hybrid values combining TF-IDF, retention², and importance.
         """
         if not facts or not query.strip():
             return [(f, 0.0) for f in facts[:top_k]] if facts else []
 
-        query_tokens = _tokenize(query)
+        query_tokens = _tokenize(query, self._langs)
         if not query_tokens:
             return [(f, 0.0) for f in facts[:top_k]]
 
         # Build document frequency map.
         doc_tokens_list: list[list[str]] = []
         for fact in facts:
-            doc_tokens_list.append(_tokenize(fact.content))
+            doc_tokens_list.append(_tokenize(fact.content, self._langs))
 
         num_docs = len(facts)
         # Count how many documents contain each token.
@@ -85,10 +99,13 @@ class TFIDFRetriever:
                 idf = math.log(1.0 + num_docs / (1.0 + df))
                 tfidf_score += tf * idf
 
-            # Hybrid score: combine TF-IDF with retention and importance.
+            # Hybrid score: combine TF-IDF with retention² and importance.
+            # Squaring retention amplifies differences in the 0.0–0.9 range so
+            # stale facts (retention ≈ 0.3) rank clearly below fresh ones
+            # (retention ≈ 0.9) even when their TF-IDF scores are similar.
             hybrid = (
                 _TFIDF_WEIGHT * tfidf_score
-                + _RETENTION_WEIGHT * fact.retention_score
+                + _RETENTION_WEIGHT * (fact.retention_score**2)
                 + _IMPORTANCE_WEIGHT * fact.importance
             )
             scored.append((hybrid, idx))
