@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from ai_knot.extractor import Extractor, resolve_against_existing
 from ai_knot.forgetting import apply_decay
+from ai_knot.languages import DEFAULT_LANGUAGES, LanguageDef, get_languages
 from ai_knot.providers import LLMProvider
 from ai_knot.retriever import TFIDFRetriever
 from ai_knot.storage.base import SnapshotCapable, StorageBackend
@@ -48,6 +49,13 @@ class KnowledgeBase:
             Default 48 h — a fact with importance=0.8 retains ~54 % after 24 h
             and ~30 % after 48 h.  Pass ``336`` for the conservative 2-week
             preset used in ai-knot < 0.5.
+        languages: ISO 639-1 language codes for the tokeniser (e.g.
+            ``["en", "ru"]``).  The tokeniser applies morphological suffix
+            stripping for each listed language, improving Recall@K for
+            inflected queries.  Pass ``[]`` to disable all stemming.
+            Defaults to ``None`` — all 15 built-in languages are active.
+            Script detection is per-token, so extra languages add no cost
+            for tokens that do not match their script patterns.
         **provider_kwargs: Extra provider arguments stored as defaults for
             ``learn()`` (e.g. ``folder_id`` for Yandex, ``base_url`` for
             openai-compat).
@@ -62,11 +70,15 @@ class KnowledgeBase:
         api_key: str | None = None,
         model: str | None = None,
         stability_hours: float = 48.0,
+        languages: list[str] | None = None,
         **provider_kwargs: str,
     ) -> None:
         self._agent_id = agent_id
         self._storage: StorageBackend = storage or YAMLStorage()
-        self._retriever = TFIDFRetriever()
+        langs: tuple[LanguageDef, ...] = (
+            get_languages(languages) if languages is not None else DEFAULT_LANGUAGES
+        )
+        self._retriever = TFIDFRetriever(languages=langs)
         self._default_provider = provider
         self._default_api_key = api_key
         self._default_model = model

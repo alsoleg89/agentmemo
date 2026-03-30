@@ -18,6 +18,40 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.0] — 2026-03-30
+
+### Added
+
+- **Pluggable language dictionaries** — morphological suffix tables now live in
+  dedicated per-language files under `src/ai_knot/languages/`.  Each file
+  exports a single `LANGUAGE = LanguageDef(...)` object with the script
+  detection pattern, suffix list (longest-first), and minimum stem length.
+  Adding a new language requires no changes to the tokeniser — only a new file
+  and a `register()` call.
+
+- **`KnowledgeBase(languages=["en", "ru"])` param** — accepts a list of ISO
+  639-1 codes.  Pass `[]` to disable all stemming; pass `["ru"]` for a
+  Russian-only agent.  Defaults to `None` — all 15 built-in languages are
+  active automatically.  Script detection is per-token so extra languages add
+  no cost for tokens that do not match their script patterns.
+
+- **`LanguageDef`** exported from `ai_knot` top-level — allows users to
+  define and register custom languages without importing internals.
+
+- **15 built-in language definitions**: `en`, `ru`, `de`, `fr`, `es`, `it`,
+  `pt`, `uk`, `pl`, `tr`, `ar`, `el`, `fi`, `zh`, `ja`.
+
+### Changed
+
+- `_tokenize()` in `retriever.py` is now language-agnostic: it iterates
+  configured `LanguageDef` objects instead of hard-coding Cyrillic/Latin
+  script detection.  Behaviour for English and Russian is identical to v0.5.
+
+- Token extraction regex widened from `[a-zA-Z0-9\u0400-\u04FF]+` to
+  `[^\W_]+` (Unicode letters + digits, all scripts).
+
+---
+
 ## [0.5.0] — 2026-03-30
 
 ### Added

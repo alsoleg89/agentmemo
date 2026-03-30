@@ -11,6 +11,7 @@ import math
 import re
 from collections import Counter
 
+from ai_knot.languages import DEFAULT_LANGUAGES, LanguageDef
 from ai_knot.types import Fact
 
 # Weight multipliers for the hybrid score.
@@ -18,94 +19,38 @@ _TFIDF_WEIGHT: float = 0.6
 _RETENTION_WEIGHT: float = 0.2
 _IMPORTANCE_WEIGHT: float = 0.2
 
-# Common Russian inflectional suffixes — ordered longest-first so that
-# the most specific suffix is stripped when multiple match.
-_RU_SUFFIXES: tuple[str, ...] = (
-    "овского",
-    "овскому",
-    "овским",
-    "ального",
-    "альному",
-    "альным",
-    "ованием",
-    "ованию",
-    "овании",
-    "ировать",
-    "ируется",
-    "ующего",
-    "ующему",
-    "ующим",
-    "ование",
-    "овании",
-    "ского",
-    "скому",
-    "ским",
-    "ового",
-    "овому",
-    "овым",
-    "ность",
-    "ности",
-    "ально",
-    "альной",
-    "ировал",
-    "ировала",
-    "овать",
-    "ование",
-    "ующий",
-    "ующая",
-    "ующее",
-    "ующих",
-    "ующим",
-    "ского",
-    "ого",
-    "его",
-    "ому",
-    "ему",
-    "ый",
-    "ий",
-    "ой",
-    "ых",
-    "их",
-    "ами",
-    "ями",
-    "ого",
-    "ого",
-    "ов",
-    "ев",
-    "ах",
-    "ях",
-)
-# Minimum stem length to avoid over-stemming short words.
-_RU_MIN_STEM = 4
 
+def _tokenize(text: str, langs: tuple[LanguageDef, ...] = DEFAULT_LANGUAGES) -> list[str]:
+    """Split text into lowercase tokens with morphological normalisation.
 
-def _tokenize(text: str) -> list[str]:
-    """Split text into lowercase tokens with basic morphological normalization.
+    For each token the function checks every configured :class:`LanguageDef`
+    in order.  The first language whose ``script_pattern`` matches the token
+    wins: its suffix table is applied (longest-first), keeping stems of at
+    least ``min_stem`` characters.  Tokens that match no language pass
+    through unchanged (e.g. numbers, punctuation fragments).
 
-    - Splits camelCase (``FastAPI`` → ``["fast", "api"]``)
-    - Strips trailing ``-s`` from English tokens longer than 3 characters
-    - Strips common Russian inflectional suffixes (падежные/adjectival endings)
-      using a suffix list, keeping stems of at least 4 characters
-
-    This avoids adding any runtime dependencies while improving Recall@K for
-    Russian-language facts by normalizing common morphological variants.
+    Additional pre-processing:
+    - CamelCase is split (``FastAPI`` → ``fast api``).
+    - All tokens are lowercased before matching.
     """
     text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    raw_tokens = re.findall(r"[a-zA-Z0-9\u0400-\u04FF]+", text.lower())
+    # Match sequences of Unicode letters and digits across all scripts.
+    raw_tokens = re.findall(r"[^\W_]+", text.lower())
 
     result: list[str] = []
     for t in raw_tokens:
-        if re.search(r"[\u0400-\u04FF]", t):
-            # Cyrillic token — strip the first matching Russian suffix.
-            stripped = t
-            for suffix in _RU_SUFFIXES:
-                if t.endswith(suffix) and len(t) - len(suffix) >= _RU_MIN_STEM:
-                    stripped = t[: -len(suffix)]
-                    break
-            result.append(stripped)
-        elif t.endswith("s") and len(t) > 3:
-            result.append(t[:-1])
-        else:
+        matched = False
+        for lang in langs:
+            if re.search(lang.script_pattern, t):
+                stripped = t
+                for suffix in lang.suffixes:
+                    if t.endswith(suffix) and len(t) - len(suffix) >= lang.min_stem:
+                        stripped = t[: -len(suffix)]
+                        break
+                result.append(stripped)
+                matched = True
+                break
+        if not matched:
             result.append(t)
     return result
 
@@ -117,7 +62,16 @@ class TFIDFRetriever:
 
     The quadratic retention term amplifies differences in the 0.0–0.9 range,
     making recently-reinforced facts rank noticeably higher than stale ones.
+
+    Args:
+        languages: Language definitions used by the tokeniser.  Defaults to
+            :data:`~ai_knot.languages.DEFAULT_LANGUAGES` (English + Russian).
+            Pass the result of :func:`~ai_knot.languages.get_languages` to
+            restrict or extend the set of supported languages.
     """
+
+    def __init__(self, languages: tuple[LanguageDef, ...] = DEFAULT_LANGUAGES) -> None:
+        self._langs = languages
 
     def search(self, query: str, facts: list[Fact], *, top_k: int = 5) -> list[tuple[Fact, float]]:
         """Find the most relevant facts for a query.
@@ -134,14 +88,14 @@ class TFIDFRetriever:
         if not facts or not query.strip():
             return [(f, 0.0) for f in facts[:top_k]] if facts else []
 
-        query_tokens = _tokenize(query)
+        query_tokens = _tokenize(query, self._langs)
         if not query_tokens:
             return [(f, 0.0) for f in facts[:top_k]]
 
         # Build document frequency map.
         doc_tokens_list: list[list[str]] = []
         for fact in facts:
-            doc_tokens_list.append(_tokenize(fact.content))
+            doc_tokens_list.append(_tokenize(fact.content, self._langs))
 
         num_docs = len(facts)
         # Count how many documents contain each token.

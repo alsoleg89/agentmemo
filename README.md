@@ -608,6 +608,46 @@ After 24 h with default settings (importance=0.8, 0 accesses):
 
 ---
 
+## Language configuration
+
+The tokeniser applies morphological suffix stripping to improve Recall@K for
+inflected queries.  By default English and Russian are active (same as v0.5).
+
+```python
+# Default — all 15 built-in languages active automatically
+kb = KnowledgeBase(agent_id="bot")
+
+# Russian-only agent
+kb = KnowledgeBase(agent_id="ru-bot", languages=["ru"])
+
+# Multi-language: English, German, French
+kb = KnowledgeBase(agent_id="eu-bot", languages=["en", "de", "fr"])
+
+# Disable all stemming (e.g. for languages not yet built in)
+kb = KnowledgeBase(agent_id="zh-bot", languages=[])
+```
+
+Built-in codes: `en`, `ru`, `de`, `fr`, `es`, `it`, `pt`, `uk`, `pl`, `tr`,
+`ar`, `el`, `fi`, `zh`, `ja`.
+
+**Custom language** — register a `LanguageDef` before creating the KB:
+
+```python
+from ai_knot import KnowledgeBase, LanguageDef
+from ai_knot.languages import register
+
+register(LanguageDef(
+    code="kk",
+    script_pattern=r"[\u0400-\u04FF]",        # Kazakh uses Cyrillic
+    suffixes=("дың", "ның", "ға", "ге", "да", "де", "тан", "тен"),
+    min_stem=4,
+))
+
+kb = KnowledgeBase(agent_id="kk-bot", languages=["kk", "ru"])
+```
+
+---
+
 ## LLM providers
 
 ai-knot ships with 6 providers for fact extraction:
